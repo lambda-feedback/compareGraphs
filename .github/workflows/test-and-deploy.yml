@@ -1,0 +1,190 @@
+name: Test & Deploy Evaluation Function to AWS Lambda
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [3.8]
+
+    defaults:
+      run:
+        working-directory: app/
+
+    env:
+      REQUEST_SCHEMA_URL: https://raw.githubusercontent.com/lambda-feedback/request-response-schemas/master/request.json
+      RESPONSE_SCHEMA_URL: https://raw.githubusercontent.com/lambda-feedback/request-response-schemas/master/responsev2.json
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install flake8 pytest
+          python -m pip install -r requirements.txt
+
+      - name: Lint with flake8
+        run: |
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Test Evaluation Function
+        run: |
+          pytest -v evaluation_tests.py::TestEvaluationFunction
+
+  deploy-staging:
+    name: Deploy Staging
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      ECR_REPOSITORY: lambda-feedback-staging-functions-repository
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Set config.json output
+        id: set_config_var
+        run: |
+          content=`cat ./config.json`
+          # the following lines are only required for multi line json
+          content="${content//'%'/'%25'}"
+          content="${content//$'\n'/'%0A'}"
+          content="${content//$'\r'/'%0D'}"
+          # end of optional handling for multi line json
+          echo "::set-output name=configJson::$content"
+
+      - name: set Evaluation Function Name
+        id: set_function_name
+        run: |
+          functionName="${{fromJson(steps.set_config_var.outputs.configJson).EvaluationFunctionName}}"
+          [[ -z "$functionName" ]] && { echo "Add EvaluationFunctionName to config.json" ; exit 1; }
+          echo "::set-output name=function_name::$functionName"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.LAMBDA_CONTAINER_PIPELINE_AWS_ID }}
+          aws-secret-access-key: ${{ secrets.LAMBDA_CONTAINER_PIPELINE_AWS_SECRET }}
+          aws-region: eu-west-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.set_function_name.outputs.function_name }}
+        run: |
+          # Build docker image from algorithm, schema and requirements
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG app/
+          # Push image to ECR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: deploy evaluation function
+        id: deploy-evaluation-function
+        env:
+          BACKEND_API_URL: https://staging-api.lambdafeedback.com
+          API_KEY: ${{ secrets.FUNCTION_ADMIN_API_KEY }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.set_function_name.outputs.function_name }}
+        run: |
+          curl --location --request POST "$BACKEND_API_URL/grading-function/ensure" \
+          --header 'content-type: application/json' \
+          --data-raw "{
+              \"apiKey\": \"$API_KEY\",
+              \"dockerImageUri\": \"$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\",
+              \"functionName\": \"$IMAGE_TAG\"
+          }"
+
+  deploy-production:
+    name: Deploy Production
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      ECR_REPOSITORY: lambda-feedback-production-functions-repository
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Set config.json output
+        id: set_config_var
+        run: |
+          content=`cat ./config.json`
+          # the following lines are only required for multi line json
+          content="${content//'%'/'%25'}"
+          content="${content//$'\n'/'%0A'}"
+          content="${content//$'\r'/'%0D'}"
+          # end of optional handling for multi line json
+          echo "::set-output name=configJson::$content"
+
+      - name: set Evaluation Function Name
+        id: set_function_name
+        run: |
+          functionName="${{fromJson(steps.set_config_var.outputs.configJson).EvaluationFunctionName}}"
+          [[ -z "$functionName" ]] && { echo "Add EvaluationFunctionName to config.json" ; exit 1; }
+          echo "::set-output name=function_name::$functionName"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.LAMBDA_CONTAINER_PIPELINE_AWS_ID }}
+          aws-secret-access-key: ${{ secrets.LAMBDA_CONTAINER_PIPELINE_AWS_SECRET }}
+          aws-region: eu-west-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.set_function_name.outputs.function_name }}
+        run: |
+          # Build docker image from algorithm, schema and requirements
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG app/
+          # Push image to ECR
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: deploy evaluation function
+        id: deploy-evaluation-function
+        env:
+          BACKEND_API_URL: https://prod-api.lambdafeedback.com
+          API_KEY: ${{ secrets.FUNCTION_ADMIN_API_KEY }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.set_function_name.outputs.function_name }}
+        run: |
+          curl --location --request POST "$BACKEND_API_URL/grading-function/ensure" \
+          --header 'content-type: application/json' \
+          --data-raw "{
+              \"apiKey\": \"$API_KEY\",
+              \"dockerImageUri\": \"$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG\",
+              \"functionName\": \"$IMAGE_TAG\"
+          }"
