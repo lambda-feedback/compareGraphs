@@ -97,7 +97,7 @@ def eval_poly(pixels, eval_func_at_x, params):
     
 
 def eval_linear(pixels, eval_func_at_x, params):
-    within_error, error_feedback = deviations_check(pixels, eval_func_at_x)
+    within_error, error_feedback = deviations_check(pixels, eval_func_at_x, 50, 0.5)
     sufficient_coverage, coverage_feedback = coverage_check(pixels, params)
     sufficient_density, density_feedback = density_check(pixels, params)
     correct_gradient, gradient_feedback = gradient_check(pixels, eval_func_at_x)
