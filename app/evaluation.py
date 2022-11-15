@@ -84,7 +84,7 @@ def evaluation_function(response, answer, params):
     except SyntaxError: 
         return EvaluationException("Answer expression was not a valid expression")
 
-    if degree(answer) == 1:
+    if degree(eval_func_at_x) == 1:
         # linear polynomial
         return eval_linear(pixels, eval_func_at_x, params)
     else:
