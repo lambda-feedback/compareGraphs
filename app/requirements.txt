@@ -1,0 +1,5 @@
+sympy
+Pillow
+numpy
+scipy
+evaluation-function-utils
