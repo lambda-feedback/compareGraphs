@@ -98,7 +98,7 @@ def eval_poly(pixels, eval_func_at_x, params):
     pass
     
 def eval_linear(pixels, eval_func_at_x, params):
-    #within_error, error_feedback = deviations_check(pixels, eval_func_at_x, 50, 0.5)
+    within_error, error_feedback = deviations_check(pixels, eval_func_at_x, 50, 0.5)
     sufficient_coverage, coverage_feedback = coverage_check(pixels, params)
     sufficient_density, density_feedback = density_check(pixels, params)
     correct_gradient = gradient_check(pixels, eval_func_at_x)
@@ -106,8 +106,8 @@ def eval_linear(pixels, eval_func_at_x, params):
     correct_x_intercept, x_intercept_feedback = x_intercept_check(pixels, eval_func_at_x, params["x_scale"])
 
     return {
-        "is_correct": bool(sufficient_coverage and sufficient_density and correct_gradient),
-        "feedback" : coverage_feedback + density_feedback + y_intercept_feedback + x_intercept_feedback
+        "is_correct": bool(within_error and sufficient_coverage and sufficient_density and correct_gradient and correct_x_intercept and correct_y_intercept),
+        "feedback" : error_feedback +  coverage_feedback + density_feedback + y_intercept_feedback + x_intercept_feedback
         }
 
 def coverage_check(pixels, params):
@@ -127,6 +127,7 @@ def density_check(pixels, params):
 
 def deviations_check(pixels, eval_func_at_x, percentage, bound):
     deviations = []
+    pixels = pixels[0:-1:15]
     for pixel in pixels:
         deviations.append(round(abs(pixel[1] - eval_func_at_x(pixel[0])), 4))
     deviations = list(np.sort(np.array(deviations)))
@@ -191,3 +192,5 @@ def normalise(response, params):
     coords = map(lambda coord: [coeff[0] * coord[0], -coeff[1] * coord[1] ] , coords)
     coords = map(lambda coord: [round(coord[0] + params["x_lower"] - params["x_scale"], 3), round(coord[1] + params["y_upper"] + params["y_scale"], 3)], coords)
     return list(coords)
+
+
