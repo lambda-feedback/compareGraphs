@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 from evaluation_function_utils.errors import EvaluationException
 
+
 MINIMUM_COVERAGE = 0.7
 DENSITY = 100
 SQUARES_ERROR_BOUND = 0.2
@@ -100,13 +101,13 @@ def eval_linear(pixels, eval_func_at_x, params):
     within_error, error_feedback = deviations_check(pixels, eval_func_at_x, 50, 0.5)
     sufficient_coverage, coverage_feedback = coverage_check(pixels, params)
     sufficient_density, density_feedback = density_check(pixels, params)
-    correct_gradient, gradient_feedback = gradient_check(pixels, eval_func_at_x)
+    correct_gradient = gradient_check(pixels, eval_func_at_x)
     correct_y_intercept, y_intercept_feedback = y_intercept_check(pixels, eval_func_at_x, params["y_scale"])
     correct_x_intercept, x_intercept_feedback = x_intercept_check(pixels, eval_func_at_x, params["x_scale"])
 
     return {
         "is_correct": bool(within_error and sufficient_coverage and sufficient_density and correct_gradient),
-        "feedback": gradient_feedback + y_intercept_feedback + x_intercept_feedback + coverage_feedback + density_feedback + error_feedback
+        "feedback": y_intercept_feedback + x_intercept_feedback + coverage_feedback + density_feedback + error_feedback
         }
 
 def coverage_check(pixels, params):
