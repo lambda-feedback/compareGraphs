@@ -7,6 +7,7 @@ import urllib.request
 import numpy as np
 from PIL import Image
 from evaluation_function_utils.errors import EvaluationException
+import json
 
 
 MINIMUM_COVERAGE = 0.7
@@ -96,9 +97,8 @@ def evaluation_function(response, answer, params):
 def eval_poly(pixels, eval_func_at_x, params):
     pass
     
-
 def eval_linear(pixels, eval_func_at_x, params):
-    within_error, error_feedback = deviations_check(pixels, eval_func_at_x, 50, 0.5)
+    #within_error, error_feedback = deviations_check(pixels, eval_func_at_x, 50, 0.5)
     sufficient_coverage, coverage_feedback = coverage_check(pixels, params)
     sufficient_density, density_feedback = density_check(pixels, params)
     correct_gradient = gradient_check(pixels, eval_func_at_x)
@@ -106,8 +106,8 @@ def eval_linear(pixels, eval_func_at_x, params):
     correct_x_intercept, x_intercept_feedback = x_intercept_check(pixels, eval_func_at_x, params["x_scale"])
 
     return {
-        "is_correct": bool(within_error and sufficient_coverage and sufficient_density and correct_gradient),
-        "feedback": y_intercept_feedback + x_intercept_feedback + coverage_feedback + density_feedback + error_feedback
+        "is_correct": bool(sufficient_coverage and sufficient_density and correct_gradient),
+        "feedback" : coverage_feedback + density_feedback + y_intercept_feedback + x_intercept_feedback
         }
 
 def coverage_check(pixels, params):
