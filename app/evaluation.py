@@ -1,22 +1,21 @@
 import numpy as np
 from scipy import stats
-from sympy import poly
+from sympy import poly, real_roots, diff
 from sympy.polys.polytools import degree
 from sympy.abc import x
 import urllib.request
 import numpy as np
 from PIL import Image
 from evaluation_function_utils.errors import EvaluationException
-import json
-
+import math
 
 MINIMUM_COVERAGE = 0.7
 DENSITY = 100
 SQUARES_ERROR_BOUND = 0.2
 PIXELS_PER_SQUARE = 50
 RELATIVE_GRADIENT_ERROR = 0.1
-EPS = 0.0001
-INTERCEPT_TOLERANCE = 12
+EPS = 1 / 20
+INTERCEPT_TOLERANCE = 1 / 3
 
 
 # Future handling: Multi-variable polynomials, Other coordinate systems (polar, log)
@@ -79,7 +78,7 @@ def evaluation_function(response, answer, params):
     if (not "error_bound" in params):
         params["error_bound"] = SQUARES_ERROR_BOUND
 
-    pixels = np.array(normalise(response, params))
+    pixels = normalise(response, params)
     # Response is now of the form [[3, 6], [3.2, 6.1], ...]
     try:
         eval_func_at_x = poly(answer)
@@ -91,31 +90,54 @@ def evaluation_function(response, answer, params):
         return eval_linear(pixels, eval_func_at_x, params)
     else:
         # higher-order polynomial 
-        return eval_poly(pixels, eval_func_at_x, params)
+        return eval_poly(pixels, eval_func_at_x, params, answer)
     
 
-def eval_poly(pixels, eval_func_at_x, params):
-    pass
+def eval_poly(pixels, eval_func_at_x, params, answer):
+    y_int, y_int_fb = y_intercept_check(pixels, eval_func_at_x, params["y_scale"])
+    x_intercepts = [ (float(root), 0) for root in real_roots(eval_func_at_x) ]
+    x_ints = all([ critical_point_check(pixels, x_intercept, params["x_scale"], compare_on=1) for x_intercept in x_intercepts])
+    x_ints_fb = "You've drawn the correct roots\n<br>" if x_ints else f"You haven't drawn all the roots correctly. To find all the correct roots, solve the provided equation for x\n<br>"
+    no_add_intercepts, add_intcpt_fb = check_additional_intercepts(pixels, [(0, eval_func_at_x(0))] + x_intercepts)
+
+    turning_pts = [(float(x), eval_func_at_x(x)) for x in real_roots(diff(eval_func_at_x))]
+    # Let's only check maxima and minima for now, and not points of inflection
+    maxima = list(filter(lambda coord: diff(diff(eval_func_at_x))(coord[0]) < -0.000001, turning_pts))
+    minima = list(filter(lambda coord: diff(diff(eval_func_at_x))(coord[0]) > 0.000001, turning_pts))
+    no_add_tp, add_tp_fb = check_additional_turning_pts(pixels, eval_func_at_x, maxima + minima, params)
+    all_maximas, maximas_fb = check_maxima(pixels, maxima, params["x_scale"], params["y_scale"])
+    all_minimas, minimas_fb = check_minima(pixels, minima, params["x_scale"], params["y_scale"])
     
+    num_squares = math.floor(((params["x_upper"] - params["x_lower"]) / params["x_scale"]) + 2)
+    dev_check, dev_fb = sliding_deviations_check(pixels, eval_func_at_x, degree(eval_func_at_x) * params["y_scale"], 50, 1.5, num_squares)
+
+    dom_coeff, doem_coeff_fb = check_dom_coeff(pixels, eval_func_at_x)
+    feedback = x_ints_fb + y_int_fb + add_intcpt_fb + add_tp_fb + doem_coeff_fb + maximas_fb + minimas_fb + dev_fb
+    return {
+        "is_correct": bool(x_ints and y_int and no_add_intercepts and no_add_tp and dom_coeff and all_maximas and all_minimas and dev_check),
+        "feedback": feedback
+    }
+    
+
 def eval_linear(pixels, eval_func_at_x, params):
     within_error, error_feedback = deviations_check(pixels, eval_func_at_x, 50, 0.5)
     sufficient_coverage, coverage_feedback = coverage_check(pixels, params)
     sufficient_density, density_feedback = density_check(pixels, params)
-    correct_gradient = gradient_check(pixels, eval_func_at_x)
+    correct_gradient, gradient_feedback = gradient_check(pixels, eval_func_at_x)
     correct_y_intercept, y_intercept_feedback = y_intercept_check(pixels, eval_func_at_x, params["y_scale"])
     correct_x_intercept, x_intercept_feedback = x_intercept_check(pixels, eval_func_at_x, params["x_scale"])
-
+    
     return {
         "is_correct": bool(within_error and sufficient_coverage and sufficient_density and correct_gradient and correct_x_intercept and correct_y_intercept),
-        "feedback" : error_feedback +  coverage_feedback + density_feedback + y_intercept_feedback + x_intercept_feedback
+        "feedback": gradient_feedback + y_intercept_feedback + x_intercept_feedback + coverage_feedback + density_feedback + error_feedback
         }
 
 def coverage_check(pixels, params):
     # Ensure that the response covers a sufficiently large area of the graph
-    if (pixels[-1][0] - pixels[0][0]) / (params["x_upper"] - params["x_lower"] + 2 * params["x_scale"]) > MINIMUM_COVERAGE:
+    if (pythagorean_dist(pixels[0], pixels[-1]) > (params["y_upper"] - params["y_lower"]) / 2):
         return True, ""
     else:
-        return False, "Coordinates do not cover enough of the graph\n"
+        return False, "Coordinates do not cover enough of the graph\n<br>"
 
 def density_check(pixels, params):
     # Ensure that there are no substantial gaps in the response
@@ -123,28 +145,47 @@ def density_check(pixels, params):
                                     for i in range(len(pixels) - 1)]):
         return True, ""
     else:
-        return False, "Coordinates are not continuous enough\n"
+        return False, "Coordinates are not continuous enough\n<br>"
 
-def deviations_check(pixels, eval_func_at_x, percentage, bound):
-    deviations = []
-    pixels = pixels[0:-1:15]
-    for pixel in pixels:
-        deviations.append(round(abs(pixel[1] - eval_func_at_x(pixel[0])), 4))
-    deviations = list(np.sort(np.array(deviations)))
+
+def sliding_deviations_check(pixels, eval_func_at_x, scale, percentage, bound, divisor):
+    deviations = np.abs(pixels[:, 1] - np.vectorize(eval_func_at_x)(pixels[:, 0]))
+    length = len(deviations) 
+    for i in range(1, divisor - 3):
+        lower_b = length * i // divisor
+        upper_b = length * (i+3) // divisor
+
+        devs = np.sort(deviations[lower_b : upper_b])
+        x = devs[int((len(devs) * percentage) // 100)] / scale
+        if bound < x and x < 2 * bound:
+            return False, f"We were unsure if the shape of your graph is correct, particularly between {pixels[lower_b]} and {pixels[upper_b]}. Please redraw the graph, using the guide points to help draw a smooth curve."    
+        elif x > 2 * bound:
+            return False, f"Graph deviates too much from the expected. Double-check the shape, particularly between {pixels[lower_b]} and {pixels[upper_b]}"
+    return True, ""
+
+def deviations_check(pixels, eval_func_at_x, percentage, bound, check_sum_squares=True):
+    devs = np.abs(pixels[:, 1] - np.vectorize(eval_func_at_x)(pixels[:, 0]))
+    deviations = np.sort(devs)
     # Ensure that the sum of least squares of deviations from correct value is within a certain error bound
     sum_squares = 0
     sum_squares = sum(map(lambda dev : dev ** 2, deviations))
     feedback = ""
-    if not (sum_squares / len(deviations)) < SQUARES_ERROR_BOUND:
-        feedback = f"Coordinates are outside of error bounds. Sum of squares = {sum_squares / len(pixels)}\n"
+    if check_sum_squares and not (sum_squares / len(deviations)) < SQUARES_ERROR_BOUND:
+        feedback = f"Coordinates are outside of error bounds. Sum of squares = {sum_squares / len(pixels)}\n<br>"
     if not deviations[(len(deviations) * percentage) // 100] < bound:
-        feedback += f"Too many points are outside a reasonable range of the function.\n"
-    return (sum_squares / len(deviations)) < SQUARES_ERROR_BOUND and deviations[(len(deviations) * percentage) // 100] < bound, feedback
+        feedback += f"Too many points are outside a reasonable range of the function.\n<br>"
+    return (not check_sum_squares or (sum_squares / len(deviations)) < SQUARES_ERROR_BOUND) and deviations[(len(deviations) * percentage) // 100] < bound, feedback
 
 def gradient_check(pixels, eval_func_at_x):
     expected_slope = eval_func_at_x(1) - eval_func_at_x(0)
     slope, intercept, r_value, p_value, std_err = stats.linregress(pixels[:, 0], pixels[:, 1])
-    return np.abs((slope - expected_slope) / expected_slope) < RELATIVE_GRADIENT_ERROR
+    if np.abs((slope - expected_slope) / expected_slope) < RELATIVE_GRADIENT_ERROR:
+        return True, "We checked the gradient and it is correct\n<br>"
+    else:
+        return False, f"We expected a gradient of {expected_slope}, but your graph has a gradient of about: {slope}\n<br>"
+
+def pythagorean_dist(p1, p2):
+    return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
 # Where the point is the point we want to check the distance of
 # And compare_on refers to the coordinate we want to fix
@@ -154,31 +195,135 @@ def gradient_check(pixels, eval_func_at_x):
 # This can now be used to check maxima and minima points of polynomials as well
 def critical_point_check(pixels, point, scale, compare_on=0):
     other = 1 if compare_on == 0 else 0
-    critical_region = list(filter(lambda coord: np.abs(coord[compare_on] - point[compare_on]) < EPS, pixels))
+    # critical_region = pixels[ pixels[:, compare_on] - point[compare_on] < EPS ]
+    critical_region = list(filter(lambda coord: np.abs(coord[compare_on] - point[compare_on]) < EPS * scale, pixels))
     if critical_region == []:
         return False
     else:
-        critical_region.sort(key=lambda coord: np.abs(coord[compare_on] - point[compare_on]))
-        observed_point = critical_region[0][other] 
-        pixel_diff = np.abs(point[other] - observed_point) * PIXELS_PER_SQUARE / scale
-        return pixel_diff < INTERCEPT_TOLERANCE
+        # Can't find a good way to do this using numpy- perhaps these will have to be lists?
+        critical_region.sort(key=lambda coord: abs(pythagorean_dist(coord, point)))
+        observed_point = critical_region[0]
+        return (abs(observed_point[other] - point[other])) < INTERCEPT_TOLERANCE
 
 def y_intercept_check(pixels, eval_func_at_x, y_scale):
     if critical_point_check(pixels, (0, eval_func_at_x(0)), y_scale):
-        return True, ""
+        return True, "You have a correct y intercept!\n<br>"
     else:
-        return False, "Y intercept is not correct\n"
+        return False, "We tested the y-intercept and it was incorrect\n<br>"
+
+def is_maxima(pixels, maxima, x_scale, y_scale):
+    closest_x = pixels[0][0]
+    ind = 0
+    
+    for i in range(len(pixels)):
+        if (np.abs(closest_x - maxima[0]) > np.abs(pixels[i][0] - maxima[0])):
+            closest_x = pixels[i][0]
+            ind = i
+
+    highest_y = pixels[ind][1]
+    for i in range(ind-50, ind+50):
+        if pixels[i][1] > highest_y:
+            highest_y = pixels[i][1]
+            ind = i    
+
+    inds = []
+    for i in range(ind-50, ind+50):
+        if pixels[i][1] == highest_y:
+            inds.append(i)
+            
+    ind = inds[len(inds) // 2]    
+
+    # TODO
+    #check_maxima = np.sum(pixels[ind-20:ind+20, 1]) > np.sum(pixels[ind-100:ind-60, 1]) and np.sum(pixels[ind-20:ind+20, 1]) > np.sum(pixels[ind+60:ind+100, 1])
+    check_proximity = np.abs(pixels[ind][0] - maxima[0]) / x_scale < 1 / 2 and np.abs(pixels[ind][1] - maxima[1]) / y_scale < 1 / 2
+
+    return check_proximity 
+
+def check_maxima(pixels, maximas, x_scale, y_scale):
+    for maxima in maximas:
+        if not is_maxima(pixels, maxima, x_scale, y_scale):
+            return False, f"There's a missing maxima at ({round(maxima[0], 1)}, {round(maxima[1], 1)})\n<br>"
+    return True, f"You've correctly identified all maxima\n<br>"
+
+def is_minima(pixels, minima, x_scale, y_scale):
+    closest_x = pixels[0][0]
+    ind = 0
+    
+    for i in range(len(pixels)):
+        if (np.abs(closest_x - minima[0]) > np.abs(pixels[i][0] - minima[0])):
+            closest_x = pixels[i][0]
+            ind = i
+
+    highest_y = pixels[ind][1]
+    for i in range(ind-50, ind+50):
+        if pixels[i][1] < highest_y:
+            highest_y = pixels[i][1]
+            ind = i
+            
+    inds = []
+    for i in range(ind-50, ind+50):
+        if pixels[i][1] == highest_y:
+            inds.append(i)
+            
+    ind = inds[len(inds) // 2]
+    
+    # TODO
+    #check_minima = np.sum(pixels[ind-20:ind+20, 1]) < np.sum(pixels[ind-100:ind-60, 1]) and np.sum(pixels[ind-20:ind+20, 1]) < np.sum(pixels[ind+60:ind+100, 1])
+    check_proximity = np.abs(pixels[ind][0] - minima[0]) / x_scale < 1 / 2 and np.abs(pixels[ind][1] - minima[1]) / y_scale < 1 / 2
+
+    return check_proximity 
+
+def check_minima(pixels, minimas, x_scale, y_scale):
+    for minima in minimas:
+        if not is_minima(pixels, minima, x_scale, y_scale):
+            return False, f"Expected minima at ({minima[0]}, {minima[1]})\n<br>"
+    return True, "You have correctly identified all minima\n<br>"
 
 def x_intercept_check(pixels, eval_func_at_x, x_scale):
     if critical_point_check(pixels, (- eval_func_at_x(0) / (eval_func_at_x(1) - eval_func_at_x(0)), 0), x_scale, compare_on=1):
-        return True, ""
+        return True, "You have correct x-intercept!\n<br>"
     else:
-        return False, "X intercept is not correct\n"
+        return False, "Double check your x-intercepts.\n<br>"
+
+def check_dom_coeff(pixels, eval_func_at_x):
+    expected_coeff = eval_func_at_x.coeffs()[0]
+    deg = degree(eval_func_at_x)
+    observed_coeff = np.polyfit(pixels[:, 0], pixels[:, 1], deg)[0]
+    
+    expected_coeff_sgn = np.sign(expected_coeff)
+    observed_coeff_sgn = np.sign(observed_coeff)
+    
+    if expected_coeff_sgn == observed_coeff_sgn:
+        return True, "Your curve behaves correctly at the endpoints\n<br>"
+    elif expected_coeff_sgn == 1 and observed_coeff_sgn == -1:
+        return False, "Double check the behaviour of your curve at the endpoints\n<br>"
+        # return False, "Expected positive dominant coefficient but found negative\n"
+    else:
+        return False, "Double check the behaviour of your curve at the endpoints\n<br>"
+
+def check_additional_intercepts(pixels, intercepts):
+    observed_ints = list(filter(lambda coord: abs(coord[0]) < 0.0001 or abs(coord[1]) < 0.0001, pixels))
+    for o_int in observed_ints:
+        close = False
+        for intercept in intercepts:
+            close = close or pythagorean_dist(o_int, intercept) < 1
+        if not close:
+            return False, "Double check where your graph intercepts the axis.\n<br>"
+    return True, ""
+
+def check_additional_turning_pts(pixels, eval_func_at_x, turning_pts, params):
+    width = 90
+    for i in range(50, len(pixels) - 140, 30):
+        if ((pixels[i+width][1] - pixels[i][1]) * (eval_func_at_x(pixels[i+width][0]) - eval_func_at_x(pixels[i][0])) < 0 and 
+            abs(eval_func_at_x(pixels[i][0]) - eval_func_at_x(pixels[i+width][0])) > 0.25 * (params["y_scale"] / params["x_scale"]) and
+            abs(diff(eval_func_at_x)(pixels[i+(int(width // 2))][0])) < 10 * (params["y_scale"] / params["x_scale"]) and 
+            all([tp[0] < pixels[i][0] or tp[0] > pixels[i+width][0] for tp in turning_pts])):
+            return False, f"Have a look at the shape of the graph around {round(pixels[i][0], 1)}\n<br>"
+    return True, ""
 
 def normalise(response, params):
     num_squares = (params["x_upper"] - params["x_lower"] + 2*params["x_scale"], params["y_upper"] - params["y_lower"] + 2*params["y_scale"])
     response_size = ((num_squares[0] / params["x_scale"]) * PIXELS_PER_SQUARE, (num_squares[1] / params["y_scale"]) * PIXELS_PER_SQUARE)
-    
     # Process png
     response = urllib.request.urlopen(response)
     img = np.array(Image.open(response))
@@ -189,8 +334,14 @@ def normalise(response, params):
 
     # Linear transformation on the pixels to the coordinate grid
     coeff = [num_squares[0] / response_size[0], num_squares[1] / response_size[1]]
-    coords = map(lambda coord: [coeff[0] * coord[0], -coeff[1] * coord[1] ] , coords)
-    coords = map(lambda coord: [round(coord[0] + params["x_lower"] - params["x_scale"], 3), round(coord[1] + params["y_upper"] + params["y_scale"], 3)], coords)
-    return list(coords)
+    coords = [coeff[0], -coeff[1]] * coords
+    coords += [params["x_lower"] - params["x_scale"], params["y_upper"] + params["y_scale"]]
 
-
+    def moving_average(a, n=10):
+        ret = np.cumsum(a)
+        ret[n:] = ret[n:] - ret[:-n] 
+        return ret[n - 1:] / n
+    
+    x_smoothed = moving_average(coords[:, 0]).reshape((-1, 1))
+    y_smoothed = moving_average(coords[:, 1]).reshape((-1, 1))
+    return np.hstack((x_smoothed, y_smoothed))
