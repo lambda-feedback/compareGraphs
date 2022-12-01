@@ -97,9 +97,8 @@ def evaluation_function(response, answer, params):
 
 def eval_poly(pixels, eval_func_at_x, params, answer):
     y_int, y_int_fb = y_intercept_check(pixels, eval_func_at_x, params["x_scale"], params["y_scale"])
+    x_ints, x_ints_fb = real_roots_check(pixels, eval_func_at_x, params["y_scale"], params["x_scale"])
     x_intercepts = [ (float(root), 0) for root in real_roots(eval_func_at_x) ]
-    x_ints = all([ critical_point_check(pixels, x_intercept, params["y_scale"], params["x_scale"], compare_on=1) for x_intercept in x_intercepts])
-    x_ints_fb = "You've drawn the correct roots\n<br>" if x_ints else f"You haven't drawn all the roots correctly. To find all the correct roots, solve the provided equation for x\n<br>"
     no_add_intercepts, add_intcpt_fb = check_additional_intercepts(pixels, [(0, eval_func_at_x(0))] + x_intercepts)
 
     turning_pts = [(float(x), eval_func_at_x(x)) for x in real_roots(diff(eval_func_at_x))]
@@ -116,9 +115,9 @@ def eval_poly(pixels, eval_func_at_x, params, answer):
     #one_to_many, one_to_many_fb = one_to_many_check(pixels, eval_func_at_x, 0.02, num_squares)
 
     dom_coeff, doem_coeff_fb = check_dom_coeff(pixels, eval_func_at_x)
-    feedback = x_ints_fb + y_int_fb + add_intcpt_fb + add_tp_fb + doem_coeff_fb + maximas_fb + minimas_fb + dev_fb #+ one_to_many_fb
+    feedback = dev_fb + doem_coeff_fb + x_ints_fb + y_int_fb + add_intcpt_fb + maximas_fb + minimas_fb + add_tp_fb  #+ one_to_many_fb
     return {
-        "is_correct": bool(x_ints and y_int and no_add_intercepts and no_add_tp and dom_coeff and all_maximas and all_minimas and dev_check ), #and one_to_many),
+        "is_correct": bool(dev_check and dom_coeff and x_ints and y_int and no_add_intercepts and no_add_tp and all_maximas and all_minimas), #and one_to_many),
         "feedback": feedback
     }
     
@@ -162,10 +161,10 @@ def sliding_deviations_check(pixels, eval_func_at_x, scale, percentage, bound, d
         devs = np.sort(deviations[lower_b : upper_b])
         x = devs[int((len(devs) * percentage) // 100)] / scale
         if bound < x and x < 2 * bound:
-            return False, f"We were unsure if the shape of your graph is correct, particularly between {pixels[lower_b]} and {pixels[upper_b]}. Please redraw the graph, using the guide points to help draw a smooth curve."    
+            return False, f"We were unsure if the shape of your graph is correct, particularly between x={round(pixels[lower_b][0], 1)} and x={round(pixels[upper_b][0], 1)}. Try using the guide points to help draw a smooth curve.\n<br>"
         elif x > 2 * bound:
-            return False, f"Graph deviates too much from the expected. Double-check the shape, particularly between {pixels[lower_b]} and {pixels[upper_b]}"
-    return True, ""
+            return False, f"The shape of your graph deviates too much from what we expected, particularly between x={round(pixels[lower_b][0], 1)} and x={round(pixels[upper_b][0], 1)}. Try using the guide points to help draw a smooth curve.\n<br>"
+    return True, "We checked the overall shape of your graph, and it seems correct!\n<br>"
 
 def deviations_check(pixels, eval_func_at_x, percentage, bound, check_sum_squares=True):
     devs = np.abs(pixels[:, 1] - np.vectorize(eval_func_at_x)(pixels[:, 0]))
@@ -230,9 +229,15 @@ def critical_point_check(pixels, point, compare_scale, other_scale, compare_on=0
 
 def y_intercept_check(pixels, eval_func_at_x, x_scale, y_scale):
     if critical_point_check(pixels, (0, eval_func_at_x(0)), x_scale, y_scale):
-        return True, "You have a correct y intercept!\n<br>"
+        return True, f"You correctly found the y intercept at {(0, round(eval_func_at_x(0), 1))}.\n<br>"
     else:
-        return False, "We tested the y-intercept and it was incorrect\n<br>"
+        return False, "We tested your y-intercept and it was incorrect.\n<br>"
+
+def real_roots_check(pixels, eval_func_at_x, y_scale, x_scale):
+    x_intercepts = [ (float(root), 0) for root in real_roots(eval_func_at_x) ]
+    x_ints = all([ critical_point_check(pixels, x_intercept, y_scale, x_scale, compare_on=1) for x_intercept in x_intercepts])
+    x_ints_fb = "You've found all the roots of the equation and drawn them correctly.\n<br>" if x_ints else f"Looks like you're missing at least one root - have you tried equating the polynomial to 0 and solving for x?\n<br>"
+    return x_ints, x_ints_fb 
 
 def is_maxima(pixels, maxima, x_scale, y_scale):
     closest_x = pixels[0][0]
@@ -265,8 +270,8 @@ def is_maxima(pixels, maxima, x_scale, y_scale):
 def check_maxima(pixels, maximas, x_scale, y_scale):
     for maxima in maximas:
         if not critical_point_check(pixels, maxima, x_scale, y_scale): 
-            return False, f"There's a missing maxima at ({round(maxima[0], 1)}, {round(maxima[1], 1)})\n<br>"
-    return True, f"You've correctly identified all maxima\n<br>"
+            return False, f"Looks like you're missing at least one maxima - have you tried differentiating the equation and finding the roots?\n<br>"
+    return True, f"You've correctly identified all maxima!\n<br>"
 
 def is_minima(pixels, minima, x_scale, y_scale):
     closest_x = pixels[0][0]
@@ -299,12 +304,12 @@ def is_minima(pixels, minima, x_scale, y_scale):
 def check_minima(pixels, minimas, x_scale, y_scale):
     for minima in minimas:
         if not critical_point_check(pixels, minima, x_scale, y_scale):
-            return False, f"Expected minima at ({minima[0]}, {minima[1]})\n<br>"
-    return True, "You have correctly identified all minima\n<br>"
+            return False, f"Looks like you're missing at least one minima - have you tried differentiating the equation and finding the roots?\n<br>"
+    return True, "You've correctly identified all minima!\n<br>"
 
 def x_intercept_check(pixels, eval_func_at_x, x_scale, y_scale):
     if critical_point_check(pixels, (- eval_func_at_x(0) / (eval_func_at_x(1) - eval_func_at_x(0)), 0), y_scale, x_scale, compare_on=1):
-        return True, "You have correct x-intercept!\n<br>"
+        return True, "You have a correct x-intercept!\n<br>"
     else:
         return False, "Double check your x-intercepts.\n<br>"
 
@@ -317,12 +322,12 @@ def check_dom_coeff(pixels, eval_func_at_x):
     observed_coeff_sgn = np.sign(observed_coeff)
     
     if expected_coeff_sgn == observed_coeff_sgn:
-        return True, "Your curve behaves correctly at the endpoints\n<br>"
+        return True, ""
     elif expected_coeff_sgn == 1 and observed_coeff_sgn == -1:
-        return False, "Double check the behaviour of your curve at the endpoints\n<br>"
+        return False, "How should the graph behave at the endpoints?\n<br>"
         # return False, "Expected positive dominant coefficient but found negative\n"
     else:
-        return False, "Double check the behaviour of your curve at the endpoints\n<br>"
+        return False, "How should the graph behave at the endpoints?\n<br>"
 
 def check_additional_intercepts(pixels, intercepts):
     observed_ints = list(filter(lambda coord: abs(coord[0]) < 0.0001 or abs(coord[1]) < 0.0001, pixels))
@@ -344,14 +349,14 @@ def check_additional_turning_pts(pixels, eval_func_at_x, turning_pts, params):
             abs(eval_func_at_x(pixels[i][0]) - eval_func_at_x(pixels[i+width][0])) > 0.25 * (params["y_scale"] / params["x_scale"]) and
             abs(diff(eval_func_at_x)(pixels[i+(int(width // 2))][0])) < 10 * (params["y_scale"] / params["x_scale"]) and 
             all([tp[0] < pixels[i][0] or tp[0] > pixels[i+width][0] for tp in turning_pts])):
-            return False, f"Have a look at the shape of the graph around {round(pixels[i][0], 1)}\n<br>"
+            return False, f"Did you mean to include a turning point at ({round(pixels[i][0], 1)}, {round(pixels[i][1], 1)})?\n<br>"
     
     for i in range(140, len(pixels) - 50, 30):
         if ((pixels[i-width][1] - pixels[i][1]) * (eval_func_at_x(pixels[i-width][0]) - eval_func_at_x(pixels[i][0])) < 0 and 
             abs(eval_func_at_x(pixels[i][0]) - eval_func_at_x(pixels[i-width][0])) > 0.25 * (params["y_scale"] / params["x_scale"]) and
             abs(diff(eval_func_at_x)(pixels[i+(int(width // 2))][0])) < 10 * (params["y_scale"] / params["x_scale"]) and 
             all([tp[0] < pixels[i][0] or tp[0] > pixels[i-width][0] for tp in turning_pts])):
-            return False, f"Have a look at the shape of the graph around {round(pixels[i][0], 1)}\n<br>"
+            return False, f"Did you mean to include a turning point at ({round(pixels[i][0], 1)}, {round(pixels[i][1], 1)})?\n<br>"
     
     return True, ""
 
