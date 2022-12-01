@@ -110,12 +110,12 @@ def eval_poly(pixels, eval_func_at_x, params, answer):
     all_minimas, minimas_fb = check_minima(pixels, minima, params["x_scale"], params["y_scale"])
 
     num_squares = math.floor(((params["x_upper"] - params["x_lower"]) / params["x_scale"]) + 2)
-    dev_check, dev_fb = sliding_deviations_check(pixels, eval_func_at_x, (degree(eval_func_at_x) ** 0.5) * params["y_scale"], 50, 1.5, int(1.5*num_squares))
+    dev_check, dev_fb = sliding_deviations_check(pixels, eval_func_at_x, params["y_scale"], 50, 1.5, int(1.5*num_squares))
 
     #one_to_many, one_to_many_fb = one_to_many_check(pixels, eval_func_at_x, 0.02, num_squares)
 
     dom_coeff, doem_coeff_fb = check_dom_coeff(pixels, eval_func_at_x)
-    shape_fb = doem_coeff_fb if  not dev_check and dom_coeff else dev_fb + doem_coeff_fb 
+    shape_fb = "We checked the overall shape of your graph, and it seems correct!\n<br>" if  dev_check and dom_coeff else "The shape of your graph isn't quite right.\n Check the behaviour at the endpoints and the shape of the graph in between<br>"
     feedback = shape_fb + x_ints_fb + y_int_fb + add_intcpt_fb + maximas_fb + minimas_fb + add_tp_fb  #+ one_to_many_fb
     return {
         "is_correct": bool(dev_check and dom_coeff and x_ints and y_int and no_add_intercepts and no_add_tp and all_maximas and all_minimas), #and one_to_many),
@@ -153,18 +153,18 @@ def density_check(pixels, params):
 
 
 def sliding_deviations_check(pixels, eval_func_at_x, scale, percentage, bound, divisor):
-    deviations = np.abs(pixels[:, 1] - np.vectorize(eval_func_at_x)(pixels[:, 0]))
+    deviations = np.square(np.divide(pixels[:, 1] - np.vectorize(eval_func_at_x)(pixels[:, 0]), scale))
     length = len(deviations)
+
     for i in range(1, divisor - 3):
         lower_b = length * i // divisor
         upper_b = length * (i+3) // divisor
 
-        devs = np.sort(deviations[lower_b : upper_b])
-        x = devs[int((len(devs) * percentage) // 100)] / scale
-        if bound < x and x < 2 * bound:
+        devs = np.divide(np.sum(deviations[lower_b : upper_b]),(upper_b - lower_b))
+
+        if devs >  1 :
             return False, f"We were unsure if the shape of your graph is correct, particularly between x={round(pixels[lower_b][0], 1)} and x={round(pixels[upper_b][0], 1)}. Try using the guide points to help draw a smooth curve.\n<br>"
-        elif x > 2 * bound:
-            return False, f"The shape of your graph deviates too much from what we expected, particularly between x={round(pixels[lower_b][0], 1)} and x={round(pixels[upper_b][0], 1)}. Try using the guide points to help draw a smooth curve.\n<br>"
+    
     return True, "We checked the overall shape of your graph, and it seems correct!\n<br>"
 
 def deviations_check(pixels, eval_func_at_x, percentage, bound, check_sum_squares=True):
