@@ -32,22 +32,22 @@ def evaluation_function(response, answer, params):
     - `answer` which are the correct answers to compare against.
     - `params` which are any extra parameters that may be useful,
         e.g., error tolerances.
-    The output of this function is what is returned as the API response 
-    and therefore must be JSON-encodable. It must also conform to the 
+    The output of this function is what is returned as the API response
+    and therefore must be JSON-encodable. It must also conform to the
     response schema.
-    Any standard python library may be used, as well as any package 
+    Any standard python library may be used, as well as any package
     available on pip (provided it is added to requirements.txt).
-    The way you wish to structure you code (all in this function, or 
-    split into many) is entirely up to you. All that matters are the 
-    return types and that evaluation_function() is the main function used 
+    The way you wish to structure you code (all in this function, or
+    split into many) is entirely up to you. All that matters are the
+    return types and that evaluation_function() is the main function used
     to output the evaluation response.
     """
 
     """
     Reponse:
-        { 
+        {
             student_answer : png uri in string format e.g (PG1234GD6887...),
-            params :{ 
+            params :{
             "x_lower": -5,
             "x_upper": 5,
             "y_lower": -5,
@@ -64,7 +64,7 @@ def evaluation_function(response, answer, params):
     """
     if (not ("student_answer" in response and "params" in response)):
         raise EvaluationException("Student answer and/or question parameters are missing")
-    
+
     params = response["params"]
     response = response["student_answer"]
 
@@ -84,16 +84,16 @@ def evaluation_function(response, answer, params):
     # Response is now of the form [[3, 6], [3.2, 6.1], ...]
     try:
         eval_func_at_x = poly(answer)
-    except SyntaxError: 
+    except SyntaxError:
         return EvaluationException("Answer expression was not a valid expression")
 
     if degree(eval_func_at_x) == 1:
         # linear polynomial
         return eval_linear(pixels, eval_func_at_x, params)
     else:
-        # higher-order polynomial 
+        # higher-order polynomial
         return eval_poly(pixels, eval_func_at_x, params, answer)
-    
+
 
 def eval_poly(pixels, eval_func_at_x, params, answer):
     y_int, y_int_fb = y_intercept_check(pixels, eval_func_at_x, params["x_scale"], params["y_scale"])
@@ -108,19 +108,20 @@ def eval_poly(pixels, eval_func_at_x, params, answer):
     no_add_tp, add_tp_fb = check_additional_turning_pts(pixels, eval_func_at_x, maxima + minima, params)
     all_maximas, maximas_fb = check_maxima(pixels, maxima, params["x_scale"], params["y_scale"])
     all_minimas, minimas_fb = check_minima(pixels, minima, params["x_scale"], params["y_scale"])
-    
+
     num_squares = math.floor(((params["x_upper"] - params["x_lower"]) / params["x_scale"]) + 2)
-    dev_check, dev_fb = sliding_deviations_check(pixels, eval_func_at_x, degree(eval_func_at_x) * params["y_scale"], 50, 1.5, int(1.5*num_squares))
+    dev_check, dev_fb = sliding_deviations_check(pixels, eval_func_at_x, (degree(eval_func_at_x) ** 0.5) * params["y_scale"], 50, 1.5, int(1.5*num_squares))
 
     #one_to_many, one_to_many_fb = one_to_many_check(pixels, eval_func_at_x, 0.02, num_squares)
 
     dom_coeff, doem_coeff_fb = check_dom_coeff(pixels, eval_func_at_x)
-    feedback = dev_fb + doem_coeff_fb + x_ints_fb + y_int_fb + add_intcpt_fb + maximas_fb + minimas_fb + add_tp_fb  #+ one_to_many_fb
+    shape_fb = doem_coeff_fb if  not dev_check and dom_coeff else dev_fb + doem_coeff_fb 
+    feedback = shape_fb + x_ints_fb + y_int_fb + add_intcpt_fb + maximas_fb + minimas_fb + add_tp_fb  #+ one_to_many_fb
     return {
         "is_correct": bool(dev_check and dom_coeff and x_ints and y_int and no_add_intercepts and no_add_tp and all_maximas and all_minimas), #and one_to_many),
         "feedback": feedback
     }
-    
+
 
 def eval_linear(pixels, eval_func_at_x, params):
     within_error, error_feedback = deviations_check(pixels, eval_func_at_x, 50, 0.5)
@@ -129,7 +130,7 @@ def eval_linear(pixels, eval_func_at_x, params):
     correct_gradient, gradient_feedback = gradient_check(pixels, eval_func_at_x)
     correct_y_intercept, y_intercept_feedback = y_intercept_check(pixels, eval_func_at_x, params["x_scale"], params["y_scale"])
     correct_x_intercept, x_intercept_feedback = x_intercept_check(pixels, eval_func_at_x, params["x_scale"], params["y_scale"])
-    
+
     return {
         "is_correct": bool(within_error and sufficient_coverage and sufficient_density and correct_gradient and correct_x_intercept and correct_y_intercept),
         "feedback": gradient_feedback + y_intercept_feedback + x_intercept_feedback + coverage_feedback + density_feedback + error_feedback
@@ -153,7 +154,7 @@ def density_check(pixels, params):
 
 def sliding_deviations_check(pixels, eval_func_at_x, scale, percentage, bound, divisor):
     deviations = np.abs(pixels[:, 1] - np.vectorize(eval_func_at_x)(pixels[:, 0]))
-    length = len(deviations) 
+    length = len(deviations)
     for i in range(1, divisor - 3):
         lower_b = length * i // divisor
         upper_b = length * (i+3) // divisor
@@ -192,7 +193,7 @@ def one_to_many_check(pixels, eval_func_at_x, percentage, num_squares):
         for j in range(lower_b, upper_b - 1):
             if abs(pixels[j+1][1] - pixels[j][1]) > 0.1:
                 occurrences += 1
-        proportion = occurrences / n 
+        proportion = occurrences / n
         if proportion > percentage:
             return False, f"We were unable to correctly classify the graph. Please check behaviour around ... {proportion}"
     return True, f"One to many passed"
@@ -208,108 +209,72 @@ def gradient_check(pixels, eval_func_at_x):
 def pythagorean_dist(p1, p2):
     return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
 
-# Where the point is the point we want to check the distance of
-# And compare_on refers to the coordinate we want to fix
-# For example in checking the y-intercept, we want to fix the x-coordinate at 0 and check how far off the y-coordinate is
-# And for checking the x-intercept, we want the converse
-# The scale should be the scale of the same coordinate given by compare_on
-# This can now be used to check maxima and minima points of polynomials as well
-def critical_point_check(pixels, point, compare_scale, other_scale, compare_on=0):
-    other = 1 if compare_on == 0 else 0
-    # critical_region = pixels[ pixels[:, compare_on] - point[compare_on] < EPS ]
-    critical_region = list(filter(lambda coord: np.abs(coord[compare_on] - point[compare_on]) < CRITICAL_POINT_TOLERANCE * compare_scale, pixels))
-    if critical_region == []:
+def critical_point_check(pixels, point, axis_scales, compare_axis=0, mode='intercept'):
+    """
+    Checks if a point exists within a certain distance of a given critical point.
+    ---
+    Note: compare_axis refers to the axis which we want to fix.
+    For example in checking the y-intercept, we want to fix the x-coordinate at 0 and check how far off the y-coordinate,
+    and for checking the x-intercept, we want the converse.
+    This can be used to check maxima and minima points of polynomials as well.
+
+    Args:
+        pixels (numpy.ndarray): array of coordinates of the student drawn pixels
+        point (__type__): the critical point we want to check the distance of
+        axis_scales (float, float): the scales of the (x, y) axes
+        compare_axis (int, optional): the axis we want to fix. Defaults to 0.
+        mode (str, optional): the mode, can be maxima, minima or intercept
+
+    Returns:
+        bool: Did the check succeed.
+    """
+    PERCENTILE = 40
+    other_axis = 1 - compare_axis
+    critical_region = pixels[ np.abs(pixels[:, compare_axis] - point[compare_axis]) < CRITICAL_POINT_TOLERANCE * axis_scales[compare_axis] ]
+
+    if np.size(critical_region) == 0:
         return False
-    else:
-        return any(list(map(lambda coord: abs(coord[other] - point[other]) < CRITICAL_POINT_TOLERANCE * other_scale, critical_region)))
-        # Can't find a good way to do this using numpy- perhaps these will have to be lists?
-        #critical_region.sort(key=lambda coord: abs(pythagorean_dist(coord, point)))
-        #observed_point = critical_region[0]
-        #return (abs(observed_point[other] - point[other])) < CRITICAL_POINT_TOLERANCE * other_scale
+    elif mode == 'maxima':
+        threshold = np.percentile(critical_region[:, other_axis], 100 - PERCENTILE)
+        critical_region = critical_region[ critical_region[:, other_axis] >  threshold ]
+    elif mode == 'minima':
+        threshold = np.percentile(critical_region[:, other_axis], PERCENTILE)
+        critical_region = critical_region[ critical_region[:, other_axis] <  threshold ]
+
+    fold_func = np.any if mode == 'intercept' else np.all
+    return fold_func(np.abs(critical_region[:, other_axis] - point[other_axis]) < CRITICAL_POINT_TOLERANCE * axis_scales[other_axis])
 
 def y_intercept_check(pixels, eval_func_at_x, x_scale, y_scale):
-    if critical_point_check(pixels, (0, eval_func_at_x(0)), x_scale, y_scale):
+    if critical_point_check(pixels, (0, eval_func_at_x(0)), (x_scale, y_scale)):
         return True, f"You correctly found the y intercept at {(0, round(eval_func_at_x(0), 1))}.\n<br>"
     else:
         return False, "We tested your y-intercept and it was incorrect.\n<br>"
 
 def real_roots_check(pixels, eval_func_at_x, y_scale, x_scale):
     x_intercepts = [ (float(root), 0) for root in real_roots(eval_func_at_x) ]
-    x_ints = all([ critical_point_check(pixels, x_intercept, y_scale, x_scale, compare_on=1) for x_intercept in x_intercepts])
+    x_ints = all([ critical_point_check(pixels, x_intercept, (x_scale, y_scale), compare_axis=1) for x_intercept in x_intercepts])
     x_ints_fb = "You've found all the roots of the equation and drawn them correctly.\n<br>" if x_ints else f"Looks like you're missing at least one root - have you tried equating the polynomial to 0 and solving for x?\n<br>"
     return x_ints, x_ints_fb 
 
-def is_maxima(pixels, maxima, x_scale, y_scale):
-    closest_x = pixels[0][0]
-    ind = 0
-    
-    for i in range(len(pixels)):
-        if (np.abs(closest_x - maxima[0]) > np.abs(pixels[i][0] - maxima[0])):
-            closest_x = pixels[i][0]
-            ind = i
-
-    highest_y = pixels[ind][1]
-    for i in range(ind-50, ind+50):
-        if pixels[i][1] > highest_y:
-            highest_y = pixels[i][1]
-            ind = i    
-
-    inds = []
-    for i in range(ind-50, ind+50):
-        if pixels[i][1] == highest_y:
-            inds.append(i)
-            
-    ind = inds[len(inds) // 2]    
-
-    # TODO
-    #check_maxima = np.sum(pixels[ind-20:ind+20, 1]) > np.sum(pixels[ind-100:ind-60, 1]) and np.sum(pixels[ind-20:ind+20, 1]) > np.sum(pixels[ind+60:ind+100, 1])
-    check_proximity = np.abs(pixels[ind][0] - maxima[0]) / x_scale < 1 / 2 and np.abs(pixels[ind][1] - maxima[1]) / y_scale < 1 / 2
-
-    return check_proximity 
-
 def check_maxima(pixels, maximas, x_scale, y_scale):
+    if maximas == []:
+        return True, ""
     for maxima in maximas:
-        if not critical_point_check(pixels, maxima, x_scale, y_scale): 
+        if not critical_point_check(pixels, maxima, (x_scale, y_scale), mode='maxima'):
             return False, f"Looks like you're missing at least one maxima - have you tried differentiating the equation and finding the roots?\n<br>"
-    return True, f"You've correctly identified all maxima!\n<br>"
-
-def is_minima(pixels, minima, x_scale, y_scale):
-    closest_x = pixels[0][0]
-    ind = 0
-    
-    for i in range(len(pixels)):
-        if (np.abs(closest_x - minima[0]) > np.abs(pixels[i][0] - minima[0])):
-            closest_x = pixels[i][0]
-            ind = i
-
-    highest_y = pixels[ind][1]
-    for i in range(ind-50, ind+50):
-        if pixels[i][1] < highest_y:
-            highest_y = pixels[i][1]
-            ind = i
-            
-    inds = []
-    for i in range(ind-50, ind+50):
-        if pixels[i][1] == highest_y:
-            inds.append(i)
-            
-    ind = inds[len(inds) // 2]
-    
-    # TODO
-    #check_minima = np.sum(pixels[ind-20:ind+20, 1]) < np.sum(pixels[ind-100:ind-60, 1]) and np.sum(pixels[ind-20:ind+20, 1]) < np.sum(pixels[ind+60:ind+100, 1])
-    check_proximity = np.abs(pixels[ind][0] - minima[0]) / x_scale < 1 / 2 and np.abs(pixels[ind][1] - minima[1]) / y_scale < 1 / 2
-
-    return check_proximity 
+    return True, f"You've correctly identified all maxima\n<br>"
 
 def check_minima(pixels, minimas, x_scale, y_scale):
+    if minimas == []:
+        return True, ""
     for minima in minimas:
-        if not critical_point_check(pixels, minima, x_scale, y_scale):
+        if not critical_point_check(pixels, minima, (x_scale, y_scale), mode='minima'):
             return False, f"Looks like you're missing at least one minima - have you tried differentiating the equation and finding the roots?\n<br>"
-    return True, "You've correctly identified all minima!\n<br>"
+    return True, "You have correctly identified all minima\n<br>"
 
 def x_intercept_check(pixels, eval_func_at_x, x_scale, y_scale):
-    if critical_point_check(pixels, (- eval_func_at_x(0) / (eval_func_at_x(1) - eval_func_at_x(0)), 0), y_scale, x_scale, compare_on=1):
-        return True, "You have a correct x-intercept!\n<br>"
+    if critical_point_check(pixels, (- eval_func_at_x(0) / (eval_func_at_x(1) - eval_func_at_x(0)), 0), (x_scale, y_scale), compare_axis=1):
+        return True, "You have correct x-intercept!\n<br>"
     else:
         return False, "Double check your x-intercepts.\n<br>"
 
@@ -317,10 +282,10 @@ def check_dom_coeff(pixels, eval_func_at_x):
     expected_coeff = eval_func_at_x.coeffs()[0]
     deg = degree(eval_func_at_x)
     observed_coeff = np.polyfit(pixels[:, 0], pixels[:, 1], deg)[0]
-    
+
     expected_coeff_sgn = np.sign(expected_coeff)
     observed_coeff_sgn = np.sign(observed_coeff)
-    
+
     if expected_coeff_sgn == observed_coeff_sgn:
         return True, ""
     elif expected_coeff_sgn == 1 and observed_coeff_sgn == -1:
@@ -345,16 +310,16 @@ def check_additional_turning_pts(pixels, eval_func_at_x, turning_pts, params):
     pixels = np.hstack((x_smoothed, y_smoothed))
     width = 90
     for i in range(50, len(pixels) - 140, 30):
-        if ((pixels[i+width][1] - pixels[i][1]) * (eval_func_at_x(pixels[i+width][0]) - eval_func_at_x(pixels[i][0])) < 0 and 
+        if ((pixels[i+width][1] - pixels[i][1]) * (eval_func_at_x(pixels[i+width][0]) - eval_func_at_x(pixels[i][0])) < 0 and
             abs(eval_func_at_x(pixels[i][0]) - eval_func_at_x(pixels[i+width][0])) > 0.25 * (params["y_scale"] / params["x_scale"]) and
-            abs(diff(eval_func_at_x)(pixels[i+(int(width // 2))][0])) < 10 * (params["y_scale"] / params["x_scale"]) and 
+            abs(diff(eval_func_at_x)(pixels[i+(int(width // 2))][0])) < 10 * (params["y_scale"] / params["x_scale"]) and
             all([tp[0] < pixels[i][0] or tp[0] > pixels[i+width][0] for tp in turning_pts])):
             return False, f"Did you mean to include a turning point at ({round(pixels[i][0], 1)}, {round(pixels[i][1], 1)})?\n<br>"
     
     for i in range(140, len(pixels) - 50, 30):
-        if ((pixels[i-width][1] - pixels[i][1]) * (eval_func_at_x(pixels[i-width][0]) - eval_func_at_x(pixels[i][0])) < 0 and 
+        if ((pixels[i-width][1] - pixels[i][1]) * (eval_func_at_x(pixels[i-width][0]) - eval_func_at_x(pixels[i][0])) < 0 and
             abs(eval_func_at_x(pixels[i][0]) - eval_func_at_x(pixels[i-width][0])) > 0.25 * (params["y_scale"] / params["x_scale"]) and
-            abs(diff(eval_func_at_x)(pixels[i+(int(width // 2))][0])) < 10 * (params["y_scale"] / params["x_scale"]) and 
+            abs(diff(eval_func_at_x)(pixels[i+(int(width // 2))][0])) < 10 * (params["y_scale"] / params["x_scale"]) and
             all([tp[0] < pixels[i][0] or tp[0] > pixels[i-width][0] for tp in turning_pts])):
             return False, f"Did you mean to include a turning point at ({round(pixels[i][0], 1)}, {round(pixels[i][1], 1)})?\n<br>"
     
@@ -378,18 +343,18 @@ def normalise(response, params):
 
     def moving_average(a, n=10):
         ret = np.cumsum(a)
-        ret[n:] = ret[n:] - ret[:-n] 
+        ret[n:] = ret[n:] - ret[:-n]
         return ret[n - 1:] / n
-    
+
     x_smoothed = moving_average(coords[:, 0]).reshape((-1, 1))
     y_smoothed = moving_average(coords[:, 1]).reshape((-1, 1))
     #x_smoothed = savgol_filter(coords[:, 0], 100, 3).reshape((-1, 1))
     #x_smoothed = coords[:, 0].reshape((-1, 1))
     #y_smoothed = savgol_filter(coords[:, 1], 100, 3).reshape((-1, 1))
-    
+
     #import matplotlib.pyplot as plt
     #plt.plot(coords[:, 0], coords[:, 1])
     #plt.plot(x_smoothed, y_smoothed, color='red')
     #plt.savefig("fig3")
-    
+
     return np.hstack((x_smoothed, y_smoothed))
