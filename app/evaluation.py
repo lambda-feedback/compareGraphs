@@ -110,12 +110,12 @@ def eval_poly(pixels, eval_func_at_x, params, answer):
     all_minimas, minimas_fb = check_minima(pixels, minima, params["x_scale"], params["y_scale"])
 
     num_squares = math.floor(((params["x_upper"] - params["x_lower"]) / params["x_scale"]) + 2)
-    dev_check, dev_fb = sliding_deviations_check(pixels, eval_func_at_x, params["y_scale"], 50, 1.5, int(1.5*num_squares))
+    dev_check, dev_fb = sliding_deviations_check(pixels, eval_func_at_x, params["y_scale"], 50, 1.5, int(2*num_squares))
 
     #one_to_many, one_to_many_fb = one_to_many_check(pixels, eval_func_at_x, 0.02, num_squares)
 
-    dom_coeff, doem_coeff_fb = check_dom_coeff(pixels, eval_func_at_x)
-    shape_fb = "We checked the overall shape of your graph, and it seems correct!\n<br>" if  dev_check and dom_coeff else "The shape of your graph isn't quite right.\n Check the behaviour at the endpoints and the shape of the graph in between<br>"
+    dom_coeff, dom_coeff_fb = check_dom_coeff(pixels, eval_func_at_x)
+    shape_fb = dom_coeff_fb if dev_check and not dom_coeff else dev_fb + dom_coeff_fb
     feedback = shape_fb + x_ints_fb + y_int_fb + add_intcpt_fb + maximas_fb + minimas_fb + add_tp_fb  #+ one_to_many_fb
     return {
         "is_correct": bool(dev_check and dom_coeff and x_ints and y_int and no_add_intercepts and no_add_tp and all_maximas and all_minimas), #and one_to_many),
@@ -252,6 +252,8 @@ def y_intercept_check(pixels, eval_func_at_x, x_scale, y_scale):
 
 def real_roots_check(pixels, eval_func_at_x, y_scale, x_scale):
     x_intercepts = [ (float(root), 0) for root in real_roots(eval_func_at_x) ]
+    if len(x_intercepts) == 0:
+        return True, ""
     x_ints = all([ critical_point_check(pixels, x_intercept, (x_scale, y_scale), compare_axis=1) for x_intercept in x_intercepts])
     x_ints_fb = "You've found all the roots of the equation and drawn them correctly.\n<br>" if x_ints else f"Looks like you're missing at least one root - have you tried equating the polynomial to 0 and solving for x?\n<br>"
     return x_ints, x_ints_fb 
