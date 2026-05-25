@@ -1,96 +1,99 @@
-# Evaluation Function Template Repository
+# compareGraphs
 
-This template repository contains the boilerplate code needed in order to create an AWS Lambda function that can be written by any tutor to grade a response area in any way they like.
+> **Deprecated:** This project is no longer maintained and has been deprecated. No further updates or support will be provided.
 
-This version is specifically for python, however the ultimate goal is to make similar boilerplate repositories in any language, allowing tutors the freedom to code in what they feel most comfortable with.
+An AWS Lambda evaluation function that grades student-drawn graphs against a provided polynomial equation and returns detailed feedback.
+
+Given a student's graph as a PNG (base64 URI) and a correct equation in [SymPy](https://docs.sympy.org/latest/index.html) format, the function normalises the pixel coordinates to the graph's axis space and checks the drawing against the expected curve. Different checks are applied depending on whether the equation is linear or a higher-order polynomial.
 
 ## Table of Contents
-- [Evaluation Function Template Repository](#evaluation-function-template-repository)
-  - [Table of Contents](#table-of-contents)
-  - [Repository Structure](#repository-structure)
-  - [Usage](#usage)
-    - [Getting Started](#getting-started)
-  - [How it works](#how-it-works)
-    - [Docker & Amazon Web Services (AWS)](#docker--amazon-web-services-aws)
-    - [Middleware Functions](#middleware-functions)
-    - [GitHub Actions](#github-actions)
-  - [Pre-requisites](#pre-requisites)
-  - [Contact](#contact)
+- [Repository Structure](#repository-structure)
+- [How it works](#how-it-works)
+  - [Linear polynomials](#linear-polynomials)
+  - [Higher-order polynomials](#higher-order-polynomials)
+- [Input/Output](#inputoutput)
+- [Docker & AWS](#docker--aws)
+- [GitHub Actions](#github-actions)
 
 ## Repository Structure
 
-```bash
+```
 app/
-    __init__.py
-    evaluation.py # Script containing the main evaluation_function
-    docs.md # Documentation page for this function (required)
-    evaluation_tests.py # Unittests for the main evaluation_function
-    requirements.txt # list of packages needed for algorithm.py
-    Dockerfile # for building whole image to deploy to AWS
+    evaluation.py        # Main evaluation logic
+    evaluation_tests.py  # Unit tests
+    docs/
+        user.md          # Usage documentation and examples
+        dev.md           # Developer documentation
+    requirements.txt
+    Dockerfile
 
 .github/
     workflows/
-        test-and-deploy.yml # Testing and deployment pipeline
+        test-and-deploy.yml
 
-config.json # Specify the name of the evaluation function in this file
-.gitignore
+config.json              # Evaluation function name
 ```
-
-## Usage
-
-### Getting Started
-
-1. Clone this repository
-2. Change the name of the evaluation function in `config.json`
-3. The name must be unique. To view existing grading functions, go to:
-
-   - [Staging API Gateway Integrations](https://eu-west-2.console.aws.amazon.com/apigateway/main/develop/integrations/attach?api=c1o0u8se7b&region=eu-west-2&routes=0xsoy4q)
-   - [Production API Gateway Integrations](https://eu-west-2.console.aws.amazon.com/apigateway/main/develop/integrations/attach?api=cttolq2oph&integration=qpbgva8&region=eu-west-2&routes=0xsoy4q)
-
-4. Merge commits into the default branch
-   - This will trigger the `test-and-deploy.yml` workflow, which will build the docker image, push it to a shared ECR repository, then call the backend `grading-function/ensure` route to build the necessary infrastructure to make the function available from the client app.
-
-5. You are now ready to start developing your function:
-   
-   - Edit the `app/evaluation.py` file, which ultimately gets called when the function is given the `eval` command
-   - Edit the `app/evaluation_tests.py` file to add tests which get run:
-       - Every time you commit to this repo, before the image is built and deployed 
-       - Whenever the `healthcheck` command is supplied to the deployed function
-   - Edit the `app/docs.md` file to reflect your changes. This file is baked into the function's image, and is made available using the `docs` command. This feature is used to display this function's documentation on our [Documentation](https://lambda-feedback.github.io/Documentation/) website once it's been hooked up!
-
----
 
 ## How it works
 
-The function is built on top of a custom base layer, [BaseEvaluationFunctionLayer](https://github.com/lambda-feedback/BaseEvalutionFunctionLayer), which tools, tests and schema checking relevant to all evaluation functions.
+The student's response is a PNG URI of their drawn graph. The function uses [PIL](https://pillow.readthedocs.io/en/stable/index.html) to extract the drawn pixels, then applies a linear transformation to map pixel coordinates onto the graph's coordinate space using the axis bounds and scale provided in `params`.
 
-### Docker & Amazon Web Services (AWS)
+### Linear polynomials
 
-The grading scripts are hosted AWS Lambda, using containers to run a docker image of the app. Docker is a popular tool in software development that allows programs to be hosted on any machine by bundling all its requirements and dependencies into a single file called an **image**.
+For straight-line graphs, the function checks:
+- **Gradient** — compares the observed slope (via linear regression) against the expected slope
+- **Y-intercept** — checks the drawing passes through the correct y-intercept
+- **X-intercept** — checks the drawing passes through the correct x-intercept
+- **Coverage** — the line must cover a sufficient portion of the graph area
+- **Density** — no large gaps in the drawn line
 
-Images are run within **containers** on AWS, which give us a lot of flexibility over what programming language and packages/libraries can be used. For more information on Docker, read this [introduction to containerisation](https://www.freecodecamp.org/news/a-beginner-friendly-introduction-to-containers-vms-and-docker-79a9e3e119b/). To learn more about AWS Lambda, click [here](https://geekflare.com/aws-lambda-for-beginners/).
+### Higher-order polynomials
 
-### Middleware Functions
-In order to run the algorithm and schema on AWS Lambda, some middleware functions have been provided to handle, validate and return the data so all you need to worry about is the evaluation script and testing.
+For curves, the function checks:
+- **Shape** — a sliding-window deviations check across the full curve
+- **Dominant coefficient sign** — whether the curve's end behaviour is correct
+- **Y-intercept** — whether the curve passes through the correct y-intercept
+- **X-intercepts / roots** — all real roots of the polynomial must be correctly drawn
+- **Maxima and minima** — all turning points must be present and correctly positioned
+- **Spurious features** — flags unexpected intercepts or extra turning points in the student's drawing
 
-The code needed to build the image using all the middleware functions are available in the [BaseEvaluationFunctionLayer](https://github.com/lambda-feedback/BaseEvalutionFunctionLayer) repository.
+## Input/Output
 
-### GitHub Actions
-Whenever a commit is made to the GitHub repository, the new code will go through a pipeline, where it will be tested for syntax errors and code coverage. The pipeline used is called **GitHub Actions** and the scripts for these can be found in `.github/workflows/`.
+**Request:**
+```json
+{
+  "response": {
+    "student_answer": "<PNG data URI of the student's drawn graph>",
+    "params": {
+      "x_upper": "<int>",
+      "x_lower": "<int>",
+      "y_upper": "<int>",
+      "y_lower": "<int>",
+      "x_scale": "<int>",
+      "y_scale": "<int>",
+      "error_bound": "<float, optional>"
+    }
+  },
+  "answer": "<equation string in SymPy format, e.g. \"-2*x+1\">"
+}
+```
 
-On top of that, when starting a new evaluation function, you will have to complete a set of unit test scripts, which not only make sure your code is reliable, but also helps you to build a _specification_ for how the code should function before you start programming.
+The `answer` must use SymPy-compatible syntax — `"-2*x+1"` is valid, `"-2x+1"` is not.
 
-Once the code passes all these tests, it will then be uploaded to AWS and will be deployed and ready to go in only a few minutes.
+**Response:**
+```json
+{
+  "is_correct": "<bool>",
+  "feedback": "<string>"
+}
+```
 
-## Pre-requisites
-Although all programming can be done through the GitHub interface, it is recommended you do this locally on your machine. To do this, you must have installed:
+## Docker & AWS
 
-- Python 3.8 or higher.
+The function runs as a Docker container on AWS Lambda. The image is built from `app/Dockerfile` and pushed to a shared ECR repository on each merge to the default branch.
 
-- GitHub Desktop or the `git` CLI.
+## GitHub Actions
 
-- A code editor such as Atom, VS Code, or Sublime.
-
-Copy this template over by clicking **Use this template** button found in the repository on GitHub. Save it to the `lambda-feedback` Organisation.
+The `.github/workflows/test-and-deploy.yml` pipeline runs unit tests on every commit and, if they pass, builds and deploys the Docker image to AWS.
 
 ## Contact
